@@ -164,7 +164,36 @@ async function formatTxDetails(tx, operations) {
     const accountNames = new Map();
     const isSpecialSender = tx.source_account === SPECIAL_ADDRESS;
     
-    // Group operations by destination
+    if (!isSpecialSender) {
+        // Format all operations without grouping
+        let output = '';
+        const senderName = await getAccountName(tx.source_account);
+        const senderDisplayName = senderName || shortenAddress(tx.source_account);
+        output += createEditableTitle(tx.source_account, senderDisplayName) + '<br>';
+
+        for (const op of operations) {
+            if (op.type === 'payment' || op.type === 'path_payment_strict_send' || op.type === 'path_payment_strict_receive') {
+                const destination = op.to || op.destination;
+                const destName = await getAccountName(destination);
+                const destDisplayName = destName || shortenAddress(destination);
+
+                let amount = op.amount;
+                let assetCode = op.asset_code || 'XLM';
+                let issuer = op.asset_issuer || '';
+
+                if (op.asset_type === 'native') {
+                    output += `${createEditableTitle(destination, destDisplayName)} - ${amount} ${assetCode}<br>`;
+                } else {
+                    const issuerName = await getAccountName(issuer);
+                    const issuerDisplay = issuerName || shortenAddress(issuer);
+                    output += `${createEditableTitle(destination, destDisplayName)} - ${amount} ${assetCode} ${createEditableTitle(issuer, issuerDisplay)}<br>`;
+                }
+            }
+        }
+        return output || 'No payment operations found in this transaction';
+    }
+
+    // For special sender, keep existing grouping logic
     operations.forEach(op => {
         if (op.type === 'payment' || op.type === 'path_payment_strict_send' || op.type === 'path_payment_strict_receive') {
             const destination = op.to || op.destination;
