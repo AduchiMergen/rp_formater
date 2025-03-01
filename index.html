@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stellar Transaction Formatter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-2xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8 text-center text-gray-800">Stellar Transaction Formatter</h1>
+        
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="mb-4">
+                <label for="txUrl" class="block text-sm font-medium text-gray-700 mb-2">Stellar Expert Transaction URL</label>
+                <input type="text" id="txUrl" 
+                    class="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Paste transaction URL here"
+                    autofocus>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Formatted Transaction</label>
+                <div id="formattedOutput" 
+                    class="w-full p-4 bg-gray-50 rounded-md min-h-[100px] break-all">
+                </div>
+            </div>
+
+            <div class="flex gap-2">
+                <button id="copyBtn" 
+                    class="flex-1 bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                    Copy to Clipboard
+                </button>
+                <button onclick="clearSavedNames()" 
+                    class="bg-gray-500 text-white py-2 px-4 rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2">
+                    Clear Names Cache
+                </button>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stellar-sdk/10.4.1/stellar-sdk.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
