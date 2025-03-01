@@ -51,26 +51,42 @@ function base64ToString(base64) {
 }
 
 function getSavedName(address) {
-    return localStorage.getItem(`name_${address}`);
+    const savedData = localStorage.getItem(`name_${address}`);
+    if (!savedData) return null;
+    try {
+        return JSON.parse(savedData);
+    } catch {
+        // Handle old format
+        return { name: savedData, isUserSet: false };
+    }
 }
 
-function saveName(address, name) {
-    localStorage.setItem(`name_${address}`, name);
+function saveName(address, name, isUserSet = false) {
+    localStorage.setItem(`name_${address}`, JSON.stringify({
+        name,
+        isUserSet
+    }));
 }
 
-function createEditableTitle(address, displayName) {
-    return `<span class="cursor-pointer border-b border-dotted border-gray-400 hover:text-blue-600 hover:border-blue-600" onclick="makeEditable(this, '${address}')">${displayName}</span>`;
+function createEditableTitle(address, displayData) {
+    const { name, isUserSet } = displayData;
+    const userSetIndicator = isUserSet ? '✎ ' : '';
+    const deleteButton = isUserSet ? 
+        `<span class="text-red-500 hover:text-red-700 cursor-pointer ml-1" onclick="event.stopPropagation(); deleteTitle('${address}')">×</span>` : 
+        '';
+    return `<span class="cursor-pointer border-b border-dotted border-gray-400 hover:text-blue-600 hover:border-blue-600" onclick="makeEditable(this, '${address}')">${userSetIndicator}${name}</span>${deleteButton}`;
 }
 
 window.makeEditable = function(element, address) {
     const input = document.createElement('input');
     input.className = 'border rounded px-1 py-0.5 text-sm';
-    input.value = element.textContent;
+    // Remove pencil icon if present when setting initial value
+    input.value = element.textContent.replace('✎ ', '');
     
     input.onblur = async () => {
         const newName = input.value.trim();
         if (newName) {
-            saveName(address, newName);
+            saveName(address, newName, true); // Mark as user-set
             // Trigger re-render by simulating input event
             const urlInput = document.getElementById('txUrl');
             const event = new Event('input', { bubbles: true });
@@ -91,43 +107,63 @@ window.makeEditable = function(element, address) {
     input.focus();
 };
 
+window.deleteTitle = function(address) {
+    localStorage.removeItem(`name_${address}`);
+    // Trigger re-render
+    const urlInput = document.getElementById('txUrl');
+    const event = new Event('input', { bubbles: true });
+    urlInput.dispatchEvent(event);
+};
+
 async function getAccountName(accountId) {
     // Check localStorage first
-    const savedName = getSavedName(accountId);
-    if (savedName) return savedName;
+    const savedData = getSavedName(accountId);
+    if (savedData) return savedData;
 
     try {
         const account = await server.loadAccount(accountId);
         const nameData = account.data_attr['Name'];
         if (nameData) {
             const name = base64ToString(nameData);
-            // Save fetched name to localStorage
-            saveName(accountId, name);
-            return name;
+            saveName(accountId, name, false);
+            return { name, isUserSet: false };
         }
-        // Save empty result to prevent future fetches
-        saveName(accountId, shortenAddress(accountId));
+        const shortAddr = shortenAddress(accountId);
+        saveName(accountId, shortAddr, false);
+        return { name: shortAddr, isUserSet: false };
     } catch (error) {
         console.error(`Error fetching account ${accountId}:`, error);
-        // Save error state to prevent future fetches
-        saveName(accountId, shortenAddress(accountId));
+        const shortAddr = shortenAddress(accountId);
+        saveName(accountId, shortAddr, false);
+        return { name: shortAddr, isUserSet: false };
     }
-    return null;
 }
 
-// Add new function to clear saved names
-window.clearSavedNames = function() {
+// Rename function to be more specific
+window.clearAutoSavedNames = async function() {
     const keys = Object.keys(localStorage);
     keys.forEach(key => {
         if (key.startsWith('name_')) {
-            localStorage.removeItem(key);
+            const savedData = getSavedName(key.replace('name_', ''));
+            if (savedData && !savedData.isUserSet) {
+                localStorage.removeItem(key);
+            }
         }
     });
-    // Reload current transaction if any
+
+    // Get current URL and force rerender
     const urlInput = document.getElementById('txUrl');
+    const formattedOutput = document.getElementById('formattedOutput');
+    
     if (urlInput.value.trim()) {
-        const event = new Event('input', { bubbles: true });
-        urlInput.dispatchEvent(event);
+        formattedOutput.innerHTML = 'Loading...';
+        try {
+            const formatted = await formatTransaction(urlInput.value.trim());
+            formattedOutput.innerHTML = formatted;
+        } catch (error) {
+            console.error('Error:', error);
+            formattedOutput.innerHTML = 'Error loading transaction details';
+        }
     }
 };
 
@@ -159,6 +195,10 @@ function shortenAddress(address) {
 
 const SPECIAL_ADDRESS = 'GCNVDZIHGX473FEI7IXCUAEXUJ4BGCKEMHF36VYP5EMS7PX2QBLAMTLA';
 
+function formatAmount(amount) {
+    return Number(amount).toString();
+}
+
 async function formatTxDetails(tx, operations) {
     const groupedOps = {};
     const accountNames = new Map();
@@ -167,26 +207,25 @@ async function formatTxDetails(tx, operations) {
     if (!isSpecialSender) {
         // Format all operations without grouping
         let output = '';
-        const senderName = await getAccountName(tx.source_account);
-        const senderDisplayName = senderName || shortenAddress(tx.source_account);
-        output += createEditableTitle(tx.source_account, senderDisplayName) + '<br>';
+        const senderNameData = await getAccountName(tx.source_account);
+        output += createEditableTitle(tx.source_account, senderNameData) + '<br>';
 
         for (const op of operations) {
             if (op.type === 'payment' || op.type === 'path_payment_strict_send' || op.type === 'path_payment_strict_receive') {
                 const destination = op.to || op.destination;
-                const destName = await getAccountName(destination);
-                const destDisplayName = destName || shortenAddress(destination);
+                const destNameData = await getAccountName(destination);
+                const destDisplayName = destNameData.name || shortenAddress(destination);
 
-                let amount = op.amount;
+                let amount = formatAmount(op.amount);
                 let assetCode = op.asset_code || 'XLM';
                 let issuer = op.asset_issuer || '';
 
                 if (op.asset_type === 'native') {
-                    output += `${createEditableTitle(destination, destDisplayName)} - ${amount} ${assetCode}<br>`;
+                    output += `${createEditableTitle(destination, destNameData)} - ${amount} ${assetCode}<br>`;
                 } else {
                     const issuerName = await getAccountName(issuer);
-                    const issuerDisplay = issuerName || shortenAddress(issuer);
-                    output += `${createEditableTitle(destination, destDisplayName)} - ${amount} ${assetCode} ${createEditableTitle(issuer, issuerDisplay)}<br>`;
+                    const issuerDisplay = issuerName.name || shortenAddress(issuer);
+                    output += `${createEditableTitle(destination, destNameData)} - ${amount} ${assetCode}<br>`;
                 }
             }
         }
@@ -201,7 +240,7 @@ async function formatTxDetails(tx, operations) {
                 groupedOps[destination] = [];
             }
             
-            let amount = op.amount;
+            let amount = formatAmount(op.amount);
             let assetCode = op.asset_code || 'XLM';
             let issuer = op.asset_issuer || '';
 
@@ -221,14 +260,14 @@ async function formatTxDetails(tx, operations) {
     if (!isSpecialSender) {
         const [[destination, payments]] = Object.entries(groupedOps);
         const name = await getAccountName(tx.source_account);
-        const displayName = name || shortenAddress(tx.source_account);
+        const displayName = name.name || shortenAddress(tx.source_account);
         
-        let output = createEditableTitle(tx.source_account, displayName) + '<br>';
+        let output = createEditableTitle(tx.source_account, name) + '<br>';
         for (const payment of payments) {
             if (payment.issuer !== 'native') {
                 const issuerName = await getAccountName(payment.issuer);
-                const issuerDisplay = issuerName || shortenAddress(payment.issuer);
-                output += createEditableTitle(payment.issuer, issuerDisplay);
+                const issuerDisplay = issuerName.name || shortenAddress(payment.issuer);
+                output += createEditableTitle(payment.issuer, issuerName);
                 output += ` - ${payment.amount} ${payment.assetCode}<br>`;
             } else {
                 output += `${payment.amount} ${payment.assetCode}<br>`;
@@ -251,7 +290,7 @@ async function formatTxDetails(tx, operations) {
     
     for (const [destination, payments] of Object.entries(groupedOps)) {
         const name = accountNames.get(destination);
-        const displayName = name || shortenAddress(destination);
+        const displayName = name.name || shortenAddress(destination);
         
         // Start new group if displayName is significantly different
         if (prevDestName && !displayName.startsWith(prevDestName.split(' ')[0])) {
@@ -259,12 +298,12 @@ async function formatTxDetails(tx, operations) {
             currentGroupOutput = '';
         }
         
-        currentGroupOutput += createEditableTitle(destination, displayName) + '<br>';
+        currentGroupOutput += createEditableTitle(destination, name) + '<br>';
         for (const payment of payments) {
             if (payment.issuer !== 'native') {
                 const issuerName = await getAccountName(payment.issuer);
-                const issuerDisplay = issuerName || shortenAddress(payment.issuer);
-                currentGroupOutput += createEditableTitle(payment.issuer, issuerDisplay);
+                const issuerDisplay = issuerName.name || shortenAddress(payment.issuer);
+                currentGroupOutput += createEditableTitle(payment.issuer, issuerName);
                 currentGroupOutput += ` - ${payment.amount} ${payment.assetCode}<br>`;
             } else {
                 currentGroupOutput += `${payment.amount} ${payment.assetCode}<br>`;
@@ -296,12 +335,13 @@ function extractTransactionId(url) {
     }
 }
 
-// Add this new function
+// Update getCleanText to handle the delete button
 function getCleanText(element) {
-    // Replace <br> with newlines and remove other HTML tags
     return element.innerHTML
         .replace(/<br\s*\/?>/gi, '\n')  // Replace <br> with newline
-        .replace(/<[^>]+>/g, '')        // Remove all other HTML tags
+        .replace(/✎\s/g, '')            // Remove pencil icon
+        .replace(/<span class="text-red-500.*?×<\/span>/g, '') // Remove delete buttons
+        .replace(/<[^>]+>/g, '')        // Remove remaining HTML tags
         .replace(/\n\n+/g, '\n\n')      // Replace multiple newlines with double newline
         .trim();                         // Remove extra whitespace
 }
