@@ -59,7 +59,7 @@ function saveName(address, name) {
 }
 
 function createEditableTitle(address, displayName) {
-    return `<span class="cursor-pointer hover:text-blue-600 hover:underline" onclick="makeEditable(this, '${address}')">${displayName}</span>`;
+    return `<span class="cursor-pointer border-b border-dotted border-gray-400 hover:text-blue-600 hover:border-blue-600" onclick="makeEditable(this, '${address}')">${displayName}</span>`;
 }
 
 window.makeEditable = function(element, address) {
@@ -157,10 +157,14 @@ function shortenAddress(address) {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
 }
 
+const SPECIAL_ADDRESS = 'GCNVDZIHGX473FEI7IXCUAEXUJ4BGCKEMHF36VYP5EMS7PX2QBLAMTLA';
+
 async function formatTxDetails(tx, operations) {
     const groupedOps = {};
     const accountNames = new Map();
+    const isSpecialSender = tx.source_account === SPECIAL_ADDRESS;
     
+    // Group operations by destination
     operations.forEach(op => {
         if (op.type === 'payment' || op.type === 'path_payment_strict_send' || op.type === 'path_payment_strict_receive') {
             const destination = op.to || op.destination;
@@ -184,19 +188,13 @@ async function formatTxDetails(tx, operations) {
         }
     });
 
-    for (const destination of Object.keys(groupedOps)) {
-        const name = await getAccountName(destination);
-        if (name) {
-            accountNames.set(destination, name);
-        }
-    }
-
-    let output = '';
-    for (const [destination, payments] of Object.entries(groupedOps)) {
-        const name = accountNames.get(destination);
-        const displayName = name || shortenAddress(destination);
-        output += createEditableTitle(destination, displayName) + '<br>';
+    // If not special sender, return first group only
+    if (!isSpecialSender) {
+        const [[destination, payments]] = Object.entries(groupedOps);
+        const name = await getAccountName(tx.source_account);
+        const displayName = name || shortenAddress(tx.source_account);
         
+        let output = createEditableTitle(tx.source_account, displayName) + '<br>';
         for (const payment of payments) {
             if (payment.issuer !== 'native') {
                 const issuerName = await getAccountName(payment.issuer);
@@ -207,7 +205,49 @@ async function formatTxDetails(tx, operations) {
                 output += `${payment.amount} ${payment.assetCode}<br>`;
             }
         }
-        output += '<br>';
+        return output;
+    }
+
+    // For special sender, format full details with groups
+    let output = '';
+    for (const destination of Object.keys(groupedOps)) {
+        const name = await getAccountName(destination);
+        if (name) {
+            accountNames.set(destination, name);
+        }
+    }
+
+    let currentGroupOutput = '';
+    let prevDestName = '';
+    
+    for (const [destination, payments] of Object.entries(groupedOps)) {
+        const name = accountNames.get(destination);
+        const displayName = name || shortenAddress(destination);
+        
+        // Start new group if displayName is significantly different
+        if (prevDestName && !displayName.startsWith(prevDestName.split(' ')[0])) {
+            output += currentGroupOutput + '<br>';
+            currentGroupOutput = '';
+        }
+        
+        currentGroupOutput += createEditableTitle(destination, displayName) + '<br>';
+        for (const payment of payments) {
+            if (payment.issuer !== 'native') {
+                const issuerName = await getAccountName(payment.issuer);
+                const issuerDisplay = issuerName || shortenAddress(payment.issuer);
+                currentGroupOutput += createEditableTitle(payment.issuer, issuerDisplay);
+                currentGroupOutput += ` - ${payment.amount} ${payment.assetCode}<br>`;
+            } else {
+                currentGroupOutput += `${payment.amount} ${payment.assetCode}<br>`;
+            }
+        }
+        
+        prevDestName = displayName;
+    }
+    
+    // Add last group
+    if (currentGroupOutput) {
+        output += currentGroupOutput;
     }
 
     return output || 'No payment operations found in this transaction';
